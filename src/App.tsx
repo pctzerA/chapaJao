@@ -101,18 +101,17 @@ const ADMIN_USERS = [
 // --- TYPES ---
 type MatchPrediction = { home: string; away: string };
 type PredictionsState = Record<string, MatchPrediction>;
-type UserData = { name: string; predictions: PredictionsState; phone: string; isAdmin?: boolean; lockedRounds?: Record<string, boolean>; userId?: string };
+type UserData = { name: string; predictions: PredictionsState; phone: string; isAdmin?: boolean; lockedRounds?: Record<string, boolean> };
 type Match = typeof INITIAL_ROUNDS[0]['partidas'][0];
 
 // Helper to convert BolaoUser to UserData
-function bolaoUserToUserData(bolaoUser: BolaoUser, predictions?: Record<string, MatchPrediction>): UserData {
+function bolaoUserToUserData(bolaoUser: BolaoUser): UserData {
   return {
     name: bolaoUser.nome,
     phone: bolaoUser.telefone,
-    predictions: predictions || {},
+    predictions: bolaoUser.predictions || {},
     isAdmin: bolaoUser.role === 'admin',
-    lockedRounds: bolaoUser.locked_rounds || {},
-    userId: bolaoUser.id
+    lockedRounds: bolaoUser.locked_rounds || {}
   };
 }
 
@@ -694,8 +693,8 @@ export default function App() {
   const [user, setUser] = useState<UserData | null>(loadUser);
   const [predictions, setPredictions] = useState<PredictionsState>(() => user?.predictions || {});
   const [results, setResults] = useState<PredictionsState>(loadResults);
-  const [rounds, setRounds] = useState<typeof INITIAL_ROUNDS>([]);
-  const [selectedRound, setSelectedRound] = useState(INITIAL_ROUNDS[0]?.stage || '');
+  const [rounds, setRounds] = useState(loadRounds);
+  const [selectedRound, setSelectedRound] = useState(rounds[0].stage);
   const [activeTab, setActiveTab] = useState<'home' | 'predictions' | 'simulator' | 'ranking' | 'admin'>('home');
   const [allUsers, setAllUsers] = useState<UserData[]>([]);
   const [toast, setToast] = useState<string | null>(null);
@@ -706,57 +705,35 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [showConfirmPredictions, setShowConfirmPredictions] = useState(false);
 
-  // Load all users and rounds from database on mount
+  // Load all users from database on mount
   useEffect(() => {
-    const loadDataFromDB = async () => {
-      console.log('🔄 Carregando dados do banco...');
-      
-      // Load users
+    const loadUsersFromDB = async () => {
       const users = await db.getAllUsers();
-      setAllUsers(users.map(u => bolaoUserToUserData(u)));
-      console.log('✅ Usuários carregados:', users.length);
-      
-      // Load rounds
-      const roundsData = await db.getAllRounds();
-      if (roundsData.length > 0) {
-        setRounds(roundsData);
-        setSelectedRound(roundsData[0].stage);
-        console.log('✅ Rodadas carregadas:', roundsData.length);
-      } else {
-        // Fallback to initial rounds if database is empty
-        setRounds(INITIAL_ROUNDS);
-        setSelectedRound(INITIAL_ROUNDS[0].stage);
-        console.log('⚠️ Usando rodadas iniciais (banco vazio)');
-      }
-      
+      setAllUsers(users.map(bolaoUserToUserData));
       setLoading(false);
     };
-    loadDataFromDB();
+    loadUsersFromDB();
   }, []);
 
   // Load user predictions from database when user is logged in
   useEffect(() => {
     const loadUserPredictions = async () => {
-      if (!user?.phone || !user?.userId) return;
+      if (!user?.phone) return;
       
-      console.log('🔄 Carregando palpites da tabela predictions (normalizada)...');
-      
-      // Load from normalized predictions table
-      const predictionsRecord = await db.getUserPredictionsRecord(user.userId);
-      
-      // Load locked rounds from bolao_users
+      console.log('🔄 Carregando palpites do banco de dados...');
       const bolaoUser = await db.getUserByPhone(user.phone);
       
       if (bolaoUser) {
+        console.log('📊 Palpites encontrados no banco:', Object.keys(bolaoUser.predictions || {}).length, 'jogos');
         console.log('🔒 Rodadas bloqueadas:', Object.keys(bolaoUser.locked_rounds || {}).length);
         
-        // Update predictions from normalized table
-        setPredictions(predictionsRecord);
+        // Update predictions from database
+        setPredictions(bolaoUser.predictions || {});
         
         // Update user locked rounds
         const updatedUser = {
           ...user,
-          predictions: predictionsRecord,
+          predictions: bolaoUser.predictions || {},
           lockedRounds: bolaoUser.locked_rounds || {}
         };
         setUser(updatedUser);
@@ -767,7 +744,7 @@ export default function App() {
     };
     
     loadUserPredictions();
-  }, [user?.userId]); // Reload when user ID changes
+  }, [user?.phone]); // Reload when user changes
 
   const isFixedAdmin = useMemo(() => {
     if (!user) return false;
@@ -805,20 +782,18 @@ export default function App() {
       
       // Reload all users
       const users = await db.getAllUsers();
-      setAllUsers(users.map(u => bolaoUserToUserData(u)));
+      setAllUsers(users.map(bolaoUserToUserData));
     } else {
       console.log('✅ Usuário encontrado no banco:', bolaoUser.nome);
+      console.log('📊 Palpites carregados do banco:', Object.keys(bolaoUser.predictions || {}).length, 'jogos');
     }
 
-    // Load predictions from normalized table
-    const predictionsRecord = await db.getUserPredictionsRecord(bolaoUser.id);
-    
-    const userData = bolaoUserToUserData(bolaoUser, predictionsRecord);
+    const userData = bolaoUserToUserData(bolaoUser);
     setUser(userData);
-    setPredictions(predictionsRecord);
+    setPredictions(userData.predictions || {});
     saveUser(userData); // Keep localStorage for backward compatibility
     
-    console.log('🎯 Login completo. Palpites carregados:', Object.keys(predictionsRecord).length);
+    console.log('🎯 Login completo. Palpites no estado:', Object.keys(userData.predictions || {}).length);
   };
 
   const handleLogout = () => {
@@ -859,23 +834,22 @@ export default function App() {
   }, [user, selectedRound]);
 
   const handleConfirmPredictions = async () => {
-    if (!user || !user.userId) return;
+    if (!user) return;
     
-    console.log('💾 SALVANDO PALPITES NA TABELA PREDICTIONS (NORMALIZADA)...');
+    console.log('💾 SALVANDO PALPITES NO BANCO DE DADOS...');
     console.log('📋 Total de palpites a salvar:', Object.keys(predictions).length);
     console.log('🎯 Rodada selecionada:', selectedRound);
-    console.log('👤 User ID:', user.userId);
     
-    // PRIMEIRO: Salvar os palpites na tabela normalizada 'predictions'
-    const saveSuccess = await db.savePredictions(user.userId, predictions);
+    // PRIMEIRO: Salvar os palpites no banco de dados
+    const saveSuccess = await db.updatePredictions(user.phone, predictions);
     if (!saveSuccess) {
-      console.error('❌ Erro ao salvar palpites na tabela predictions');
+      console.error('❌ Erro ao salvar palpites no banco');
       setToast('❌ Erro ao salvar palpites. Tente novamente.');
       return;
     }
-    console.log('✅ Palpites salvos na tabela predictions com sucesso!');
+    console.log('✅ Palpites salvos no banco com sucesso!');
     
-    // SEGUNDO: Bloquear rodada no banco de dados (bolao_users.locked_rounds)
+    // SEGUNDO: Bloquear rodada no banco de dados
     const lockSuccess = await db.lockRound(user.phone, selectedRound);
     if (!lockSuccess) {
       console.error('❌ Erro ao bloquear rodada no banco');
@@ -902,7 +876,7 @@ export default function App() {
     console.log('✅ Estado local atualizado. Rodadas bloqueadas:', Object.keys(updatedLockedRounds));
     
     setShowConfirmPredictions(false);
-    setToast('✅ Palpites confirmados e salvos na tabela Previsões!');
+    setToast('✅ Palpites confirmados e bloqueados com sucesso!');
   };
 
   const handleToggleAdmin = async (phone: string) => {
@@ -925,14 +899,13 @@ export default function App() {
 
     // Reload users from database
     const users = await db.getAllUsers();
-    setAllUsers(users.map(u => bolaoUserToUserData(u)));
+    setAllUsers(users.map(bolaoUserToUserData));
     
     // Update current user if it's them
     if (user && user.phone === phone) {
       const updatedUser = users.find(u => u.telefone === phone);
       if (updatedUser) {
-        const predictionsRecord = await db.getUserPredictionsRecord(updatedUser.id);
-        const userData = bolaoUserToUserData(updatedUser, predictionsRecord);
+        const userData = bolaoUserToUserData(updatedUser);
         setUser(userData);
         saveUser(userData);
       }
@@ -942,156 +915,113 @@ export default function App() {
   };
 
   const handleAddUser = async (name: string, phone: string) => {
-    console.log('➕ Adicionando usuário:', name, phone);
-    
     const existingUser = allUsers.find(u => u.phone === phone);
     if (existingUser) {
-      setToast('❌ Usuário com este telefone já existe!');
+      setToast('Usuário com este telefone já existe!');
       return;
     }
 
     // Create in database
     const newUser = await db.createUser(name, phone);
     if (!newUser) {
-      setToast('❌ Erro ao adicionar usuário. Tente novamente.');
+      setToast('Erro ao adicionar usuário. Tente novamente.');
       return;
     }
     
-    console.log('✅ Usuário criado no banco:', newUser.id);
-    
     // Reload users from database
     const users = await db.getAllUsers();
-    setAllUsers(users.map(u => bolaoUserToUserData(u)));
-    console.log('🔄 Lista de usuários atualizada');
-    
-    setToast('✅ Usuário adicionado com sucesso!');
+    setAllUsers(users.map(bolaoUserToUserData));
+    setToast('Usuário adicionado com sucesso!');
   };
 
   const handleEditUser = async (oldPhone: string, name: string, phone: string) => {
-    console.log('✏️ Editando usuário:', oldPhone, '->', name, phone);
-    
     // Update in database
     const updated = await db.updateUser(oldPhone, { nome: name, telefone: phone });
     if (!updated) {
-      setToast('❌ Erro ao atualizar usuário. Tente novamente.');
+      setToast('Erro ao atualizar usuário. Tente novamente.');
       return;
     }
     
-    console.log('✅ Usuário atualizado no banco');
-    
     // Reload users from database
     const users = await db.getAllUsers();
-    setAllUsers(users.map(u => bolaoUserToUserData(u)));
+    setAllUsers(users.map(bolaoUserToUserData));
     
     // Update current user if it's them
     if (user && user.phone === oldPhone) {
-      const predictionsRecord = await db.getUserPredictionsRecord(updated.id);
-      const updatedUserData = bolaoUserToUserData(updated, predictionsRecord);
+      const updatedUserData = bolaoUserToUserData(updated);
       setUser(updatedUserData);
       saveUser(updatedUserData);
     }
     
-    console.log('🔄 Lista de usuários atualizada');
-    setToast('✅ Usuário atualizado com sucesso!');
+    setToast('Usuário atualizado com sucesso!');
   };
 
   const handleDeleteUser = (phone: string) => {
     if (ADMIN_USERS.some(admin => admin.phone === phone)) {
-      setToast('❌ Administrador fixo não pode ser excluído!');
+      setToast('Administrador fixo não pode ser excluído!');
       return;
     }
 
     setConfirmModal({
       message: `Tem certeza que deseja excluir este usuário?`,
       onConfirm: async () => {
-        console.log('🗑️ Excluindo usuário:', phone);
-        
         // Delete from database
         const success = await db.deleteUser(phone);
         if (!success) {
-          setToast('❌ Erro ao excluir usuário. Tente novamente.');
+          setToast('Erro ao excluir usuário. Tente novamente.');
           setConfirmModal(null);
           return;
         }
         
-        console.log('✅ Usuário excluído do banco');
-        
         // Reload users from database
         const users = await db.getAllUsers();
-        setAllUsers(users.map(u => bolaoUserToUserData(u)));
-        
-        console.log('🔄 Lista de usuários atualizada');
-        setToast('✅ Usuário excluído com sucesso!');
+        setAllUsers(users.map(bolaoUserToUserData));
+        setToast('Usuário excluído com sucesso!');
         setConfirmModal(null);
       }
     });
   };
 
-  const handleSaveRound = async (stage: string, matches: MatchInput[]) => {
-    console.log('💾 Salvando rodada:', stage, 'com', matches.length, 'partidas');
-    
-    let success = false;
-    
+  const handleSaveRound = (stage: string, matches: MatchInput[]) => {
+    const newRound = {
+      stage,
+      partidas: matches.map((m, i) => ({
+        id: `r${rounds.length + 1}-${i + 1}`,
+        date: m.date,
+        time: m.time,
+        home: m.homeTeam,
+        away: m.awayTeam,
+        venue: m.venue
+      }))
+    };
+
+    let updatedRounds;
     if (editingRound) {
-      // Update existing round
-      console.log('✏️ Atualizando rodada existente:', editingRound.stage);
-      success = await db.updateRound(editingRound.stage, stage, matches);
-      
-      if (success) {
-        console.log('✅ Rodada atualizada no banco');
-        setToast('✅ Rodada atualizada com sucesso!');
-      } else {
-        setToast('❌ Erro ao atualizar rodada. Tente novamente.');
-        return;
-      }
+      updatedRounds = rounds.map(r => 
+        r.stage === editingRound.stage ? newRound : r
+      );
+      setToast('Rodada atualizada com sucesso!');
     } else {
-      // Create new round
-      console.log('➕ Criando nova rodada');
-      success = await db.createRound(stage, matches);
-      
-      if (success) {
-        console.log('✅ Rodada criada no banco');
-        setToast('✅ Rodada criada com sucesso!');
-      } else {
-        setToast('❌ Erro ao criar rodada. Tente novamente.');
-        return;
-      }
+      updatedRounds = [...rounds, newRound];
+      setToast('Rodada criada com sucesso!');
     }
     
-    // Reload rounds from database
-    const roundsData = await db.getAllRounds();
-    setRounds(roundsData);
-    console.log('🔄 Rodadas atualizadas do banco:', roundsData.length);
-    
+    setRounds(updatedRounds);
+    saveRounds(updatedRounds);
     setEditingRound(null);
   };
 
   const handleDeleteRound = (stage: string) => {
     setConfirmModal({
       message: `Tem certeza que deseja excluir a rodada "${stage}"?`,
-      onConfirm: async () => {
-        console.log('🗑️ Excluindo rodada:', stage);
-        
-        const success = await db.deleteRound(stage);
-        
-        if (!success) {
-          setToast('❌ Erro ao excluir rodada. Tente novamente.');
-          setConfirmModal(null);
-          return;
+      onConfirm: () => {
+        const updatedRounds = rounds.filter(r => r.stage !== stage);
+        setRounds(updatedRounds);
+        saveRounds(updatedRounds);
+        if (selectedRound === stage && updatedRounds.length > 0) {
+          setSelectedRound(updatedRounds[0].stage);
         }
-        
-        console.log('✅ Rodada excluída do banco');
-        
-        // Reload rounds from database
-        const roundsData = await db.getAllRounds();
-        setRounds(roundsData);
-        
-        if (selectedRound === stage && roundsData.length > 0) {
-          setSelectedRound(roundsData[0].stage);
-        }
-        
-        console.log('🔄 Rodadas atualizadas do banco:', roundsData.length);
-        setToast('✅ Rodada excluída com sucesso!');
+        setToast('Rodada excluída com sucesso!');
         setConfirmModal(null);
       }
     });
