@@ -17,6 +17,7 @@ export interface BolaoUser {
   role: 'user' | 'admin';
   predictions: Record<string, { home: string; away: string }>;
   locked_rounds: Record<string, boolean>; // Rodadas com palpites bloqueados
+  pontuacao_total: number;
   created_at: string;
 }
 
@@ -261,6 +262,36 @@ export const db = {
     return true;
   },
 
+  // Save multiple predictions at once (Batch UPSERT)
+  async savePredictions(
+    userId: string,
+    predictions: Record<string, { home: string; away: string }>
+  ): Promise<boolean> {
+    const predictionArray = Object.entries(predictions).map(([matchId, scores]) => ({
+      user_id: userId,
+      match_id: matchId,
+      home_score: parseInt(scores.home),
+      away_score: parseInt(scores.away)
+    }));
+
+    if (predictionArray.length === 0) {
+      console.log('No predictions to save');
+      return true;
+    }
+
+    const { error } = await supabase
+      .from('predictions')
+      .upsert(predictionArray, { onConflict: 'user_id,match_id' });
+
+    if (error) {
+      console.error('Error saving predictions batch:', error);
+      return false;
+    }
+
+    console.log(`✅ ${predictionArray.length} palpites salvos na tabela predictions`);
+    return true;
+  },
+
   // Get all predictions for a user
   async getUserPredictions(userId: string): Promise<Prediction[]> {
     const { data, error } = await supabase
@@ -274,6 +305,24 @@ export const db = {
     }
 
     return data || [];
+  },
+
+  // Get predictions as Record format (for UI compatibility)
+  async getUserPredictionsRecord(
+    userId: string
+  ): Promise<Record<string, { home: string; away: string }>> {
+    const predictions = await this.getUserPredictions(userId);
+    
+    const record: Record<string, { home: string; away: string }> = {};
+    predictions.forEach(pred => {
+      record[pred.match_id] = {
+        home: pred.home_score.toString(),
+        away: pred.away_score.toString()
+      };
+    });
+
+    console.log(`📊 Carregados ${predictions.length} palpites da tabela predictions`);
+    return record;
   },
 
   // Get predictions for specific match

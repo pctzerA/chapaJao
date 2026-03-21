@@ -101,17 +101,18 @@ const ADMIN_USERS = [
 // --- TYPES ---
 type MatchPrediction = { home: string; away: string };
 type PredictionsState = Record<string, MatchPrediction>;
-type UserData = { name: string; predictions: PredictionsState; phone: string; isAdmin?: boolean; lockedRounds?: Record<string, boolean> };
+type UserData = { name: string; predictions: PredictionsState; phone: string; isAdmin?: boolean; lockedRounds?: Record<string, boolean>; userId?: string };
 type Match = typeof INITIAL_ROUNDS[0]['partidas'][0];
 
 // Helper to convert BolaoUser to UserData
-function bolaoUserToUserData(bolaoUser: BolaoUser): UserData {
+function bolaoUserToUserData(bolaoUser: BolaoUser, predictions?: Record<string, MatchPrediction>): UserData {
   return {
     name: bolaoUser.nome,
     phone: bolaoUser.telefone,
-    predictions: bolaoUser.predictions || {},
+    predictions: predictions || {},
     isAdmin: bolaoUser.role === 'admin',
-    lockedRounds: bolaoUser.locked_rounds || {}
+    lockedRounds: bolaoUser.locked_rounds || {},
+    userId: bolaoUser.id
   };
 }
 
@@ -712,7 +713,7 @@ export default function App() {
       
       // Load users
       const users = await db.getAllUsers();
-      setAllUsers(users.map(bolaoUserToUserData));
+      setAllUsers(users.map(u => bolaoUserToUserData(u)));
       console.log('✅ Usuários carregados:', users.length);
       
       // Load rounds
@@ -736,22 +737,26 @@ export default function App() {
   // Load user predictions from database when user is logged in
   useEffect(() => {
     const loadUserPredictions = async () => {
-      if (!user?.phone) return;
+      if (!user?.phone || !user?.userId) return;
       
-      console.log('🔄 Carregando palpites do banco de dados...');
+      console.log('🔄 Carregando palpites da tabela predictions (normalizada)...');
+      
+      // Load from normalized predictions table
+      const predictionsRecord = await db.getUserPredictionsRecord(user.userId);
+      
+      // Load locked rounds from bolao_users
       const bolaoUser = await db.getUserByPhone(user.phone);
       
       if (bolaoUser) {
-        console.log('📊 Palpites encontrados no banco:', Object.keys(bolaoUser.predictions || {}).length, 'jogos');
         console.log('🔒 Rodadas bloqueadas:', Object.keys(bolaoUser.locked_rounds || {}).length);
         
-        // Update predictions from database
-        setPredictions(bolaoUser.predictions || {});
+        // Update predictions from normalized table
+        setPredictions(predictionsRecord);
         
         // Update user locked rounds
         const updatedUser = {
           ...user,
-          predictions: bolaoUser.predictions || {},
+          predictions: predictionsRecord,
           lockedRounds: bolaoUser.locked_rounds || {}
         };
         setUser(updatedUser);
@@ -762,7 +767,7 @@ export default function App() {
     };
     
     loadUserPredictions();
-  }, [user?.phone]); // Reload when user changes
+  }, [user?.userId]); // Reload when user ID changes
 
   const isFixedAdmin = useMemo(() => {
     if (!user) return false;
@@ -800,18 +805,20 @@ export default function App() {
       
       // Reload all users
       const users = await db.getAllUsers();
-      setAllUsers(users.map(bolaoUserToUserData));
+      setAllUsers(users.map(u => bolaoUserToUserData(u)));
     } else {
       console.log('✅ Usuário encontrado no banco:', bolaoUser.nome);
-      console.log('📊 Palpites carregados do banco:', Object.keys(bolaoUser.predictions || {}).length, 'jogos');
     }
 
-    const userData = bolaoUserToUserData(bolaoUser);
+    // Load predictions from normalized table
+    const predictionsRecord = await db.getUserPredictionsRecord(bolaoUser.id);
+    
+    const userData = bolaoUserToUserData(bolaoUser, predictionsRecord);
     setUser(userData);
-    setPredictions(userData.predictions || {});
+    setPredictions(predictionsRecord);
     saveUser(userData); // Keep localStorage for backward compatibility
     
-    console.log('🎯 Login completo. Palpites no estado:', Object.keys(userData.predictions || {}).length);
+    console.log('🎯 Login completo. Palpites carregados:', Object.keys(predictionsRecord).length);
   };
 
   const handleLogout = () => {
@@ -852,22 +859,23 @@ export default function App() {
   }, [user, selectedRound]);
 
   const handleConfirmPredictions = async () => {
-    if (!user) return;
+    if (!user || !user.userId) return;
     
-    console.log('💾 SALVANDO PALPITES NO BANCO DE DADOS...');
+    console.log('💾 SALVANDO PALPITES NA TABELA PREDICTIONS (NORMALIZADA)...');
     console.log('📋 Total de palpites a salvar:', Object.keys(predictions).length);
     console.log('🎯 Rodada selecionada:', selectedRound);
+    console.log('👤 User ID:', user.userId);
     
-    // PRIMEIRO: Salvar os palpites no banco de dados
-    const saveSuccess = await db.updatePredictions(user.phone, predictions);
+    // PRIMEIRO: Salvar os palpites na tabela normalizada 'predictions'
+    const saveSuccess = await db.savePredictions(user.userId, predictions);
     if (!saveSuccess) {
-      console.error('❌ Erro ao salvar palpites no banco');
+      console.error('❌ Erro ao salvar palpites na tabela predictions');
       setToast('❌ Erro ao salvar palpites. Tente novamente.');
       return;
     }
-    console.log('✅ Palpites salvos no banco com sucesso!');
+    console.log('✅ Palpites salvos na tabela predictions com sucesso!');
     
-    // SEGUNDO: Bloquear rodada no banco de dados
+    // SEGUNDO: Bloquear rodada no banco de dados (bolao_users.locked_rounds)
     const lockSuccess = await db.lockRound(user.phone, selectedRound);
     if (!lockSuccess) {
       console.error('❌ Erro ao bloquear rodada no banco');
@@ -894,7 +902,7 @@ export default function App() {
     console.log('✅ Estado local atualizado. Rodadas bloqueadas:', Object.keys(updatedLockedRounds));
     
     setShowConfirmPredictions(false);
-    setToast('✅ Palpites confirmados e bloqueados com sucesso!');
+    setToast('✅ Palpites confirmados e salvos na tabela Previsões!');
   };
 
   const handleToggleAdmin = async (phone: string) => {
@@ -917,13 +925,14 @@ export default function App() {
 
     // Reload users from database
     const users = await db.getAllUsers();
-    setAllUsers(users.map(bolaoUserToUserData));
+    setAllUsers(users.map(u => bolaoUserToUserData(u)));
     
     // Update current user if it's them
     if (user && user.phone === phone) {
       const updatedUser = users.find(u => u.telefone === phone);
       if (updatedUser) {
-        const userData = bolaoUserToUserData(updatedUser);
+        const predictionsRecord = await db.getUserPredictionsRecord(updatedUser.id);
+        const userData = bolaoUserToUserData(updatedUser, predictionsRecord);
         setUser(userData);
         saveUser(userData);
       }
@@ -952,7 +961,7 @@ export default function App() {
     
     // Reload users from database
     const users = await db.getAllUsers();
-    setAllUsers(users.map(bolaoUserToUserData));
+    setAllUsers(users.map(u => bolaoUserToUserData(u)));
     console.log('🔄 Lista de usuários atualizada');
     
     setToast('✅ Usuário adicionado com sucesso!');
@@ -972,11 +981,12 @@ export default function App() {
     
     // Reload users from database
     const users = await db.getAllUsers();
-    setAllUsers(users.map(bolaoUserToUserData));
+    setAllUsers(users.map(u => bolaoUserToUserData(u)));
     
     // Update current user if it's them
     if (user && user.phone === oldPhone) {
-      const updatedUserData = bolaoUserToUserData(updated);
+      const predictionsRecord = await db.getUserPredictionsRecord(updated.id);
+      const updatedUserData = bolaoUserToUserData(updated, predictionsRecord);
       setUser(updatedUserData);
       saveUser(updatedUserData);
     }
@@ -1008,7 +1018,7 @@ export default function App() {
         
         // Reload users from database
         const users = await db.getAllUsers();
-        setAllUsers(users.map(bolaoUserToUserData));
+        setAllUsers(users.map(u => bolaoUserToUserData(u)));
         
         console.log('🔄 Lista de usuários atualizada');
         setToast('✅ Usuário excluído com sucesso!');
