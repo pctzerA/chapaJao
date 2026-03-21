@@ -694,7 +694,7 @@ export default function App() {
   const [predictions, setPredictions] = useState<PredictionsState>(() => user?.predictions || {});
   const [results, setResults] = useState<PredictionsState>(loadResults);
   const [rounds, setRounds] = useState<typeof INITIAL_ROUNDS>([]);
-  const [selectedRound, setSelectedRound] = useState(rounds[0].stage);
+  const [selectedRound, setSelectedRound] = useState(INITIAL_ROUNDS[0]?.stage || '');
   const [activeTab, setActiveTab] = useState<'home' | 'predictions' | 'simulator' | 'ranking' | 'admin'>('home');
   const [allUsers, setAllUsers] = useState<UserData[]>([]);
   const [toast, setToast] = useState<string | null>(null);
