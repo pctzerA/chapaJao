@@ -9,6 +9,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import logoChapajao from '@/assets/chapajao-logo.png';
+import { db, type BolaoUser } from '@/lib/supabase';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -102,6 +103,16 @@ type MatchPrediction = { home: string; away: string };
 type PredictionsState = Record<string, MatchPrediction>;
 type UserData = { name: string; predictions: PredictionsState; phone: string; isAdmin?: boolean };
 type Match = typeof INITIAL_ROUNDS[0]['partidas'][0];
+
+// Helper to convert BolaoUser to UserData
+function bolaoUserToUserData(bolaoUser: BolaoUser): UserData {
+  return {
+    name: bolaoUser.nome,
+    phone: bolaoUser.telefone,
+    predictions: bolaoUser.predictions || {},
+    isAdmin: bolaoUser.role === 'admin'
+  };
+}
 
 // --- LOCAL STORAGE ---
 const LS_USER_KEY = 'bolao_user_data';
@@ -459,11 +470,14 @@ function ConfirmModal({ message, onConfirm, onCancel }: { message: string; onCon
 function LoginScreen({ onLogin }: { onLogin: (name: string, phone: string) => void }) {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (name.trim() && phone.trim()) {
-      onLogin(name.trim(), phone.trim());
+      setIsLoading(true);
+      await onLogin(name.trim(), phone.trim());
+      setIsLoading(false);
     }
   };
 
@@ -518,9 +532,10 @@ function LoginScreen({ onLogin }: { onLogin: (name: string, phone: string) => vo
 
             <button
               type="submit"
-              className="w-full bg-green-600 text-white py-3 rounded-xl font-semibold hover:bg-green-700 transition shadow-lg"
+              disabled={isLoading}
+              className="w-full bg-green-600 text-white py-3 rounded-xl font-semibold hover:bg-green-700 transition shadow-lg disabled:bg-gray-400 disabled:cursor-not-allowed"
             >
-              Entrar no Bolão
+              {isLoading ? 'Entrando...' : 'Entrar no Bolão'}
             </button>
           </form>
         </div>
@@ -632,12 +647,23 @@ export default function App() {
   const [rounds, setRounds] = useState(loadRounds);
   const [selectedRound, setSelectedRound] = useState(rounds[0].stage);
   const [activeTab, setActiveTab] = useState<'home' | 'predictions' | 'simulator' | 'ranking' | 'admin'>('home');
-  const [allUsers, setAllUsers] = useState<UserData[]>(loadAllUsers);
+  const [allUsers, setAllUsers] = useState<UserData[]>([]);
   const [toast, setToast] = useState<string | null>(null);
   const [confirmModal, setConfirmModal] = useState<{ message: string; onConfirm: () => void } | null>(null);
   const [showEditUser, setShowEditUser] = useState<UserData | null>(null);
   const [showAddRound, setShowAddRound] = useState(false);
   const [editingRound, setEditingRound] = useState<typeof INITIAL_ROUNDS[0] | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  // Load all users from database on mount
+  useEffect(() => {
+    const loadUsersFromDB = async () => {
+      const users = await db.getAllUsers();
+      setAllUsers(users.map(bolaoUserToUserData));
+      setLoading(false);
+    };
+    loadUsersFromDB();
+  }, []);
 
   const isFixedAdmin = useMemo(() => {
     if (!user) return false;
@@ -652,22 +678,36 @@ export default function App() {
   useEffect(() => {
     if (user) {
       const updated = { ...user, predictions };
-      saveUser(updated);
+      saveUser(updated); // Keep localStorage for backward compatibility
+      
+      // Also update database
+      db.updatePredictions(user.phone, predictions).catch(err => {
+        console.error('Error updating predictions in database:', err);
+      });
     }
   }, [predictions, user]);
 
-  const handleLogin = (name: string, phone: string) => {
-    const existingUser = loadAllUsers().find(u => u.phone === phone);
-    const isFixedAdminUser = ADMIN_USERS.some(admin => admin.phone === phone);
-    const userData: UserData = existingUser || { 
-      name, 
-      phone, 
-      predictions: {},
-      isAdmin: isFixedAdminUser 
-    };
+  const handleLogin = async (name: string, phone: string) => {
+    // Check database first
+    let bolaoUser = await db.getUserByPhone(phone);
+    
+    if (!bolaoUser) {
+      // Create new user in database
+      bolaoUser = await db.createUser(name, phone);
+      if (!bolaoUser) {
+        setToast('Erro ao criar usuário. Tente novamente.');
+        return;
+      }
+      
+      // Reload all users
+      const users = await db.getAllUsers();
+      setAllUsers(users.map(bolaoUserToUserData));
+    }
+
+    const userData = bolaoUserToUserData(bolaoUser);
     setUser(userData);
     setPredictions(userData.predictions);
-    saveUser(userData);
+    saveUser(userData); // Keep localStorage for backward compatibility
   };
 
   const handleLogout = () => {
@@ -706,58 +746,78 @@ export default function App() {
     setToast('Palpites salvos com sucesso!');
   };
 
-  const handleToggleAdmin = (phone: string) => {
+  const handleToggleAdmin = async (phone: string) => {
     if (ADMIN_USERS.some(admin => admin.phone === phone)) {
       setToast('Administrador fixo não pode ser alterado!');
       return;
     }
 
-    const updatedUsers = allUsers.map(u => 
-      u.phone === phone ? { ...u, isAdmin: !u.isAdmin } : u
-    );
-    setAllUsers(updatedUsers);
-    saveAllUsers(updatedUsers);
+    const targetUser = allUsers.find(u => u.phone === phone);
+    if (!targetUser) return;
+
+    const newAdminStatus = !targetUser.isAdmin;
     
+    // Update in database
+    const success = await db.toggleAdmin(phone, newAdminStatus);
+    if (!success) {
+      setToast('Erro ao atualizar permissões. Tente novamente.');
+      return;
+    }
+
+    // Reload users from database
+    const users = await db.getAllUsers();
+    setAllUsers(users.map(bolaoUserToUserData));
+    
+    // Update current user if it's them
     if (user && user.phone === phone) {
-      const updatedUser = updatedUsers.find(u => u.phone === phone)!;
-      setUser(updatedUser);
-      saveUser(updatedUser);
+      const updatedUser = users.find(u => u.telefone === phone);
+      if (updatedUser) {
+        const userData = bolaoUserToUserData(updatedUser);
+        setUser(userData);
+        saveUser(userData);
+      }
     }
     
-    setToast(updatedUsers.find(u => u.phone === phone)?.isAdmin ? 'Admin concedido!' : 'Admin revogado!');
+    setToast(newAdminStatus ? 'Admin concedido!' : 'Admin revogado!');
   };
 
-  const handleAddUser = (name: string, phone: string) => {
+  const handleAddUser = async (name: string, phone: string) => {
     const existingUser = allUsers.find(u => u.phone === phone);
     if (existingUser) {
       setToast('Usuário com este telefone já existe!');
       return;
     }
 
-    const newUser: UserData = {
-      name,
-      phone,
-      predictions: {},
-      isAdmin: false
-    };
+    // Create in database
+    const newUser = await db.createUser(name, phone);
+    if (!newUser) {
+      setToast('Erro ao adicionar usuário. Tente novamente.');
+      return;
+    }
     
-    const updatedUsers = [...allUsers, newUser];
-    setAllUsers(updatedUsers);
-    saveAllUsers(updatedUsers);
+    // Reload users from database
+    const users = await db.getAllUsers();
+    setAllUsers(users.map(bolaoUserToUserData));
     setToast('Usuário adicionado com sucesso!');
   };
 
-  const handleEditUser = (oldPhone: string, name: string, phone: string) => {
-    const updatedUsers = allUsers.map(u => 
-      u.phone === oldPhone ? { ...u, name, phone } : u
-    );
-    setAllUsers(updatedUsers);
-    saveAllUsers(updatedUsers);
+  const handleEditUser = async (oldPhone: string, name: string, phone: string) => {
+    // Update in database
+    const updated = await db.updateUser(oldPhone, { nome: name, telefone: phone });
+    if (!updated) {
+      setToast('Erro ao atualizar usuário. Tente novamente.');
+      return;
+    }
     
+    // Reload users from database
+    const users = await db.getAllUsers();
+    setAllUsers(users.map(bolaoUserToUserData));
+    
+    // Update current user if it's them
     if (user && user.phone === oldPhone) {
-      const updatedUser = { ...user, name, phone };
-      setUser(updatedUser);
-      saveUser(updatedUser);
+      const updatedUserData = bolaoUserToUserData(updated);
+      setUser(updatedUserData);
+      saveUser(updatedUserData);
     }
     
     setToast('Usuário atualizado com sucesso!');
@@ -771,10 +831,18 @@ export default function App() {
 
     setConfirmModal({
       message: `Tem certeza que deseja excluir este usuário?`,
-      onConfirm: () => {
-        const updatedUsers = allUsers.filter(u => u.phone !== phone);
-        setAllUsers(updatedUsers);
-        saveAllUsers(updatedUsers);
+      onConfirm: async () => {
+        // Delete from database
+        const success = await db.deleteUser(phone);
+        if (!success) {
+          setToast('Erro ao excluir usuário. Tente novamente.');
+          setConfirmModal(null);
+          return;
+        }
+        
+        // Reload users from database
+        const users = await db.getAllUsers();
+        setAllUsers(users.map(bolaoUserToUserData));
         setToast('Usuário excluído com sucesso!');
         setConfirmModal(null);
       }
