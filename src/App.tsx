@@ -715,6 +715,37 @@ export default function App() {
     loadUsersFromDB();
   }, []);
 
+  // Load user predictions from database when user is logged in
+  useEffect(() => {
+    const loadUserPredictions = async () => {
+      if (!user?.phone) return;
+      
+      console.log('🔄 Carregando palpites do banco de dados...');
+      const bolaoUser = await db.getUserByPhone(user.phone);
+      
+      if (bolaoUser) {
+        console.log('📊 Palpites encontrados no banco:', Object.keys(bolaoUser.predictions || {}).length, 'jogos');
+        console.log('🔒 Rodadas bloqueadas:', Object.keys(bolaoUser.locked_rounds || {}).length);
+        
+        // Update predictions from database
+        setPredictions(bolaoUser.predictions || {});
+        
+        // Update user locked rounds
+        const updatedUser = {
+          ...user,
+          predictions: bolaoUser.predictions || {},
+          lockedRounds: bolaoUser.locked_rounds || {}
+        };
+        setUser(updatedUser);
+        saveUser(updatedUser); // Update localStorage too
+      } else {
+        console.log('⚠️ Usuário não encontrado no banco');
+      }
+    };
+    
+    loadUserPredictions();
+  }, [user?.phone]); // Reload when user changes
+
   const isFixedAdmin = useMemo(() => {
     if (!user) return false;
     return ADMIN_USERS.some(admin => admin.phone === user.phone);
@@ -725,13 +756,14 @@ export default function App() {
     return isFixedAdmin || user.isAdmin === true;
   }, [user, isFixedAdmin]);
 
-  // Auto-save predictions to localStorage (but NOT to database until confirmed)
+  // Auto-save predictions to localStorage ONLY (real save to database happens on confirmation)
   useEffect(() => {
     if (user) {
       const updated = { ...user, predictions };
-      saveUser(updated); // Keep localStorage for immediate recovery
+      saveUser(updated); // Keep localStorage for immediate recovery if user exits without saving
+      console.log('💾 Auto-save local (localStorage) - Total de palpites:', Object.keys(predictions).length);
     }
-  }, [predictions, user]);
+  }, [predictions]);
 
   const handleLogin = async (name: string, phone: string) => {
     console.log('🔐 Login iniciado para:', phone);
@@ -804,13 +836,15 @@ export default function App() {
   const handleConfirmPredictions = async () => {
     if (!user) return;
     
-    console.log('💾 Salvando palpites no banco de dados...');
+    console.log('💾 SALVANDO PALPITES NO BANCO DE DADOS...');
     console.log('📋 Total de palpites a salvar:', Object.keys(predictions).length);
+    console.log('🎯 Rodada selecionada:', selectedRound);
     
     // PRIMEIRO: Salvar os palpites no banco de dados
     const saveSuccess = await db.updatePredictions(user.phone, predictions);
     if (!saveSuccess) {
-      setToast('Erro ao salvar palpites. Tente novamente.');
+      console.error('❌ Erro ao salvar palpites no banco');
+      setToast('❌ Erro ao salvar palpites. Tente novamente.');
       return;
     }
     console.log('✅ Palpites salvos no banco com sucesso!');
@@ -818,22 +852,28 @@ export default function App() {
     // SEGUNDO: Bloquear rodada no banco de dados
     const lockSuccess = await db.lockRound(user.phone, selectedRound);
     if (!lockSuccess) {
-      setToast('Erro ao bloquear palpites. Tente novamente.');
+      console.error('❌ Erro ao bloquear rodada no banco');
+      setToast('❌ Erro ao bloquear palpites. Tente novamente.');
       return;
     }
-    console.log('🔒 Rodada bloqueada no banco com sucesso!');
+    console.log('🔒 Rodada "' + selectedRound + '" bloqueada no banco com sucesso!');
 
     // TERCEIRO: Atualizar estado local
+    const updatedLockedRounds = {
+      ...(user.lockedRounds || {}),
+      [selectedRound]: true
+    };
+    
     const updatedUser = {
       ...user,
       predictions,
-      lockedRounds: {
-        ...user.lockedRounds,
-        [selectedRound]: true
-      }
+      lockedRounds: updatedLockedRounds
     };
+    
     setUser(updatedUser);
     saveUser(updatedUser);
+    
+    console.log('✅ Estado local atualizado. Rodadas bloqueadas:', Object.keys(updatedLockedRounds));
     
     setShowConfirmPredictions(false);
     setToast('✅ Palpites confirmados e bloqueados com sucesso!');
