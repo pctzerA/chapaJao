@@ -101,7 +101,7 @@ const ADMIN_USERS = [
 // --- TYPES ---
 type MatchPrediction = { home: string; away: string };
 type PredictionsState = Record<string, MatchPrediction>;
-type UserData = { name: string; predictions: PredictionsState; phone: string; isAdmin?: boolean };
+type UserData = { name: string; predictions: PredictionsState; phone: string; isAdmin?: boolean; lockedRounds?: Record<string, boolean> };
 type Match = typeof INITIAL_ROUNDS[0]['partidas'][0];
 
 // Helper to convert BolaoUser to UserData
@@ -110,7 +110,8 @@ function bolaoUserToUserData(bolaoUser: BolaoUser): UserData {
     name: bolaoUser.nome,
     phone: bolaoUser.telefone,
     predictions: bolaoUser.predictions || {},
-    isAdmin: bolaoUser.role === 'admin'
+    isAdmin: bolaoUser.role === 'admin',
+    lockedRounds: bolaoUser.locked_rounds || {}
   };
 }
 
@@ -467,6 +468,46 @@ function ConfirmModal({ message, onConfirm, onCancel }: { message: string; onCon
   );
 }
 
+function ConfirmPredictionsModal({ onConfirm, onCancel }: { onConfirm: () => void; onCancel: () => void }) {
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.9 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="bg-white rounded-2xl shadow-2xl p-8 max-w-lg w-full"
+      >
+        <div className="text-center mb-6">
+          <div className="inline-flex items-center justify-center w-16 h-16 bg-yellow-100 rounded-full mb-4">
+            <span className="text-4xl">⚠️</span>
+          </div>
+          <h3 className="text-2xl font-bold text-gray-800 mb-3">Confirmação Definitiva</h3>
+          <p className="text-gray-700 leading-relaxed">
+            Tem a certeza de que deseja guardar estes resultados? <strong>Após a confirmação, não será possível alterar os seus palpites.</strong>
+          </p>
+          <p className="text-sm text-gray-600 mt-3 italic">
+            Esta regra garante a segurança do sistema e o respeito por todos os adversários.
+          </p>
+        </div>
+        <div className="flex flex-col sm:flex-row gap-3">
+          <button
+            onClick={onCancel}
+            className="flex-1 px-6 py-3 bg-gray-200 text-gray-800 rounded-xl hover:bg-gray-300 transition font-semibold"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={onConfirm}
+            className="flex-1 px-6 py-3 bg-green-600 text-white rounded-xl hover:bg-green-700 transition font-bold shadow-md flex items-center justify-center gap-2"
+          >
+            <CheckCircle2 className="w-5 h-5" />
+            Sim, Confirmar Palpites
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
 function LoginScreen({ onLogin }: { onLogin: (name: string, phone: string) => void }) {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
@@ -654,6 +695,7 @@ export default function App() {
   const [showAddRound, setShowAddRound] = useState(false);
   const [editingRound, setEditingRound] = useState<typeof INITIAL_ROUNDS[0] | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showConfirmPredictions, setShowConfirmPredictions] = useState(false);
 
   // Load all users from database on mount
   useEffect(() => {
@@ -742,8 +784,34 @@ export default function App() {
     );
   }, [predictions, selectedRound, rounds]);
 
-  const handleConfirmPredictions = () => {
-    setToast('Palpites salvos com sucesso!');
+  const isRoundLocked = useMemo(() => {
+    if (!user || !user.lockedRounds) return false;
+    return user.lockedRounds[selectedRound] === true;
+  }, [user, selectedRound]);
+
+  const handleConfirmPredictions = async () => {
+    if (!user) return;
+    
+    // Bloquear rodada no banco de dados
+    const success = await db.lockRound(user.phone, selectedRound);
+    if (!success) {
+      setToast('Erro ao bloquear palpites. Tente novamente.');
+      return;
+    }
+
+    // Atualizar estado local
+    const updatedUser = {
+      ...user,
+      lockedRounds: {
+        ...user.lockedRounds,
+        [selectedRound]: true
+      }
+    };
+    setUser(updatedUser);
+    saveUser(updatedUser);
+    
+    setShowConfirmPredictions(false);
+    setToast('✅ Palpites confirmados e bloqueados com sucesso!');
   };
 
   const handleToggleAdmin = async (phone: string) => {
@@ -1245,27 +1313,41 @@ export default function App() {
                     key={match.id}
                     match={match}
                     prediction={predictions[match.id]}
-                    onPredictionChange={handlePredictionChange}
+                    onPredictionChange={isRoundLocked ? undefined : handlePredictionChange}
                     result={results[match.id]}
                   />
                 ))}
               </div>
 
-              <div className="flex justify-center pt-6">
-                <button
-                  onClick={handleConfirmPredictions}
-                  disabled={!canConfirmPredictions}
-                  className={cn(
-                    "px-10 py-4 rounded-2xl font-bold transition shadow-xl flex items-center gap-3 text-lg",
-                    canConfirmPredictions
-                      ? "bg-green-600 text-white hover:bg-green-700 cursor-pointer"
-                      : "bg-gray-300 text-gray-500 cursor-not-allowed"
-                  )}
-                >
-                  <Save className="w-6 h-6" />
-                  Confirmar Palpites
-                </button>
-              </div>
+              {!isRoundLocked && (
+                <div className="flex justify-center pt-6">
+                  <button
+                    onClick={() => setShowConfirmPredictions(true)}
+                    disabled={!canConfirmPredictions}
+                    className={cn(
+                      "px-10 py-4 rounded-2xl font-bold transition shadow-xl flex items-center gap-3 text-lg",
+                      canConfirmPredictions
+                        ? "bg-green-600 text-white hover:bg-green-700 cursor-pointer"
+                        : "bg-gray-300 text-gray-500 cursor-not-allowed"
+                    )}
+                  >
+                    <Save className="w-6 h-6" />
+                    Confirmar Palpites
+                  </button>
+                </div>
+              )}
+              
+              {isRoundLocked && (
+                <div className="bg-blue-50 border-2 border-blue-200 rounded-2xl p-6 text-center">
+                  <div className="inline-flex items-center justify-center w-12 h-12 bg-blue-100 rounded-full mb-3">
+                    <CheckCircle2 className="w-6 h-6 text-blue-600" />
+                  </div>
+                  <h3 className="text-lg font-bold text-blue-900 mb-2">🔒 Palpites Bloqueados</h3>
+                  <p className="text-sm text-blue-800">
+                    Seus palpites para esta rodada foram confirmados e não podem mais ser alterados.
+                  </p>
+                </div>
+              )}
             </motion.div>
           )}
 
@@ -1596,6 +1678,16 @@ export default function App() {
               setShowAddRound(false);
               setEditingRound(null);
             }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Confirm Predictions Modal */}
+      <AnimatePresence>
+        {showConfirmPredictions && (
+          <ConfirmPredictionsModal
+            onConfirm={handleConfirmPredictions}
+            onCancel={() => setShowConfirmPredictions(false)}
           />
         )}
       </AnimatePresence>

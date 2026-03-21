@@ -16,6 +16,7 @@ export interface BolaoUser {
   telefone: string;
   role: 'user' | 'admin';
   predictions: Record<string, { home: string; away: string }>;
+  locked_rounds: Record<string, boolean>; // Rodadas com palpites bloqueados
   created_at: string;
 }
 
@@ -143,5 +144,45 @@ export const db = {
     }
 
     return true;
+  },
+
+  // Lock round predictions
+  async lockRound(telefone: string, roundName: string): Promise<boolean> {
+    // Get current locked_rounds
+    const { data: user } = await supabase
+      .from('bolao_users')
+      .select('locked_rounds')
+      .eq('telefone', telefone)
+      .single();
+
+    if (!user) return false;
+
+    const lockedRounds = user.locked_rounds || {};
+    lockedRounds[roundName] = true;
+
+    const { error } = await supabase
+      .from('bolao_users')
+      .update({ locked_rounds: lockedRounds })
+      .eq('telefone', telefone);
+
+    if (error) {
+      console.error('Error locking round:', error);
+      return false;
+    }
+
+    return true;
+  },
+
+  // Check if round is locked
+  async isRoundLocked(telefone: string, roundName: string): Promise<boolean> {
+    const { data: user } = await supabase
+      .from('bolao_users')
+      .select('locked_rounds')
+      .eq('telefone', telefone)
+      .single();
+
+    if (!user) return false;
+
+    return user.locked_rounds?.[roundName] === true;
   }
 };
