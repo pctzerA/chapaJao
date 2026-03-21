@@ -693,7 +693,7 @@ export default function App() {
   const [user, setUser] = useState<UserData | null>(loadUser);
   const [predictions, setPredictions] = useState<PredictionsState>(() => user?.predictions || {});
   const [results, setResults] = useState<PredictionsState>(loadResults);
-  const [rounds, setRounds] = useState(loadRounds);
+  const [rounds, setRounds] = useState<typeof INITIAL_ROUNDS>([]);
   const [selectedRound, setSelectedRound] = useState(rounds[0].stage);
   const [activeTab, setActiveTab] = useState<'home' | 'predictions' | 'simulator' | 'ranking' | 'admin'>('home');
   const [allUsers, setAllUsers] = useState<UserData[]>([]);
@@ -705,14 +705,32 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [showConfirmPredictions, setShowConfirmPredictions] = useState(false);
 
-  // Load all users from database on mount
+  // Load all users and rounds from database on mount
   useEffect(() => {
-    const loadUsersFromDB = async () => {
+    const loadDataFromDB = async () => {
+      console.log('🔄 Carregando dados do banco...');
+      
+      // Load users
       const users = await db.getAllUsers();
       setAllUsers(users.map(bolaoUserToUserData));
+      console.log('✅ Usuários carregados:', users.length);
+      
+      // Load rounds
+      const roundsData = await db.getAllRounds();
+      if (roundsData.length > 0) {
+        setRounds(roundsData);
+        setSelectedRound(roundsData[0].stage);
+        console.log('✅ Rodadas carregadas:', roundsData.length);
+      } else {
+        // Fallback to initial rounds if database is empty
+        setRounds(INITIAL_ROUNDS);
+        setSelectedRound(INITIAL_ROUNDS[0].stage);
+        console.log('⚠️ Usando rodadas iniciais (banco vazio)');
+      }
+      
       setLoading(false);
     };
-    loadUsersFromDB();
+    loadDataFromDB();
   }, []);
 
   // Load user predictions from database when user is logged in
@@ -915,32 +933,42 @@ export default function App() {
   };
 
   const handleAddUser = async (name: string, phone: string) => {
+    console.log('➕ Adicionando usuário:', name, phone);
+    
     const existingUser = allUsers.find(u => u.phone === phone);
     if (existingUser) {
-      setToast('Usuário com este telefone já existe!');
+      setToast('❌ Usuário com este telefone já existe!');
       return;
     }
 
     // Create in database
     const newUser = await db.createUser(name, phone);
     if (!newUser) {
-      setToast('Erro ao adicionar usuário. Tente novamente.');
+      setToast('❌ Erro ao adicionar usuário. Tente novamente.');
       return;
     }
+    
+    console.log('✅ Usuário criado no banco:', newUser.id);
     
     // Reload users from database
     const users = await db.getAllUsers();
     setAllUsers(users.map(bolaoUserToUserData));
-    setToast('Usuário adicionado com sucesso!');
+    console.log('🔄 Lista de usuários atualizada');
+    
+    setToast('✅ Usuário adicionado com sucesso!');
   };
 
   const handleEditUser = async (oldPhone: string, name: string, phone: string) => {
+    console.log('✏️ Editando usuário:', oldPhone, '->', name, phone);
+    
     // Update in database
     const updated = await db.updateUser(oldPhone, { nome: name, telefone: phone });
     if (!updated) {
-      setToast('Erro ao atualizar usuário. Tente novamente.');
+      setToast('❌ Erro ao atualizar usuário. Tente novamente.');
       return;
     }
+    
+    console.log('✅ Usuário atualizado no banco');
     
     // Reload users from database
     const users = await db.getAllUsers();
@@ -953,75 +981,107 @@ export default function App() {
       saveUser(updatedUserData);
     }
     
-    setToast('Usuário atualizado com sucesso!');
+    console.log('🔄 Lista de usuários atualizada');
+    setToast('✅ Usuário atualizado com sucesso!');
   };
 
   const handleDeleteUser = (phone: string) => {
     if (ADMIN_USERS.some(admin => admin.phone === phone)) {
-      setToast('Administrador fixo não pode ser excluído!');
+      setToast('❌ Administrador fixo não pode ser excluído!');
       return;
     }
 
     setConfirmModal({
       message: `Tem certeza que deseja excluir este usuário?`,
       onConfirm: async () => {
+        console.log('🗑️ Excluindo usuário:', phone);
+        
         // Delete from database
         const success = await db.deleteUser(phone);
         if (!success) {
-          setToast('Erro ao excluir usuário. Tente novamente.');
+          setToast('❌ Erro ao excluir usuário. Tente novamente.');
           setConfirmModal(null);
           return;
         }
         
+        console.log('✅ Usuário excluído do banco');
+        
         // Reload users from database
         const users = await db.getAllUsers();
         setAllUsers(users.map(bolaoUserToUserData));
-        setToast('Usuário excluído com sucesso!');
+        
+        console.log('🔄 Lista de usuários atualizada');
+        setToast('✅ Usuário excluído com sucesso!');
         setConfirmModal(null);
       }
     });
   };
 
-  const handleSaveRound = (stage: string, matches: MatchInput[]) => {
-    const newRound = {
-      stage,
-      partidas: matches.map((m, i) => ({
-        id: `r${rounds.length + 1}-${i + 1}`,
-        date: m.date,
-        time: m.time,
-        home: m.homeTeam,
-        away: m.awayTeam,
-        venue: m.venue
-      }))
-    };
-
-    let updatedRounds;
+  const handleSaveRound = async (stage: string, matches: MatchInput[]) => {
+    console.log('💾 Salvando rodada:', stage, 'com', matches.length, 'partidas');
+    
+    let success = false;
+    
     if (editingRound) {
-      updatedRounds = rounds.map(r => 
-        r.stage === editingRound.stage ? newRound : r
-      );
-      setToast('Rodada atualizada com sucesso!');
+      // Update existing round
+      console.log('✏️ Atualizando rodada existente:', editingRound.stage);
+      success = await db.updateRound(editingRound.stage, stage, matches);
+      
+      if (success) {
+        console.log('✅ Rodada atualizada no banco');
+        setToast('✅ Rodada atualizada com sucesso!');
+      } else {
+        setToast('❌ Erro ao atualizar rodada. Tente novamente.');
+        return;
+      }
     } else {
-      updatedRounds = [...rounds, newRound];
-      setToast('Rodada criada com sucesso!');
+      // Create new round
+      console.log('➕ Criando nova rodada');
+      success = await db.createRound(stage, matches);
+      
+      if (success) {
+        console.log('✅ Rodada criada no banco');
+        setToast('✅ Rodada criada com sucesso!');
+      } else {
+        setToast('❌ Erro ao criar rodada. Tente novamente.');
+        return;
+      }
     }
     
-    setRounds(updatedRounds);
-    saveRounds(updatedRounds);
+    // Reload rounds from database
+    const roundsData = await db.getAllRounds();
+    setRounds(roundsData);
+    console.log('🔄 Rodadas atualizadas do banco:', roundsData.length);
+    
     setEditingRound(null);
   };
 
   const handleDeleteRound = (stage: string) => {
     setConfirmModal({
       message: `Tem certeza que deseja excluir a rodada "${stage}"?`,
-      onConfirm: () => {
-        const updatedRounds = rounds.filter(r => r.stage !== stage);
-        setRounds(updatedRounds);
-        saveRounds(updatedRounds);
-        if (selectedRound === stage && updatedRounds.length > 0) {
-          setSelectedRound(updatedRounds[0].stage);
+      onConfirm: async () => {
+        console.log('🗑️ Excluindo rodada:', stage);
+        
+        const success = await db.deleteRound(stage);
+        
+        if (!success) {
+          setToast('❌ Erro ao excluir rodada. Tente novamente.');
+          setConfirmModal(null);
+          return;
         }
-        setToast('Rodada excluída com sucesso!');
+        
+        console.log('✅ Rodada excluída do banco');
+        
+        // Reload rounds from database
+        const roundsData = await db.getAllRounds();
+        setRounds(roundsData);
+        
+        if (selectedRound === stage && roundsData.length > 0) {
+          setSelectedRound(roundsData[0].stage);
+        }
+        
+        console.log('🔄 Rodadas atualizadas do banco:', roundsData.length);
+        setToast('✅ Rodada excluída com sucesso!');
         setConfirmModal(null);
       }
     });
