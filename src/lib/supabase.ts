@@ -39,6 +39,33 @@ export interface BolaoMatch {
   created_at: string;
 }
 
+export interface Prediction {
+  id: string;
+  user_id: string;
+  match_id: string;
+  home_score: number;
+  away_score: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Achievement {
+  id: string;
+  badge_key: string;
+  name: string;
+  description: string;
+  icon: string;
+  created_at: string;
+}
+
+export interface UserAchievement {
+  id: string;
+  user_id: string;
+  achievement_id: string;
+  unlocked_at: string;
+  achievement: Achievement;
+}
+
 // Database operations
 export const db = {
   // Get all users
@@ -203,6 +230,144 @@ export const db = {
     if (!user) return false;
 
     return user.locked_rounds?.[roundName] === true;
+  },
+
+  // === PREDICTIONS (ARQUITETURA NORMALIZADA) ===
+
+  // Save/Update prediction (UPSERT)
+  async savePrediction(
+    userId: string,
+    matchId: string,
+    homeScore: number,
+    awayScore: number
+  ): Promise<boolean> {
+    const { error } = await supabase
+      .from('predictions')
+      .upsert(
+        {
+          user_id: userId,
+          match_id: matchId,
+          home_score: homeScore,
+          away_score: awayScore
+        },
+        { onConflict: 'user_id,match_id' }
+      );
+
+    if (error) {
+      console.error('Error saving prediction:', error);
+      return false;
+    }
+
+    return true;
+  },
+
+  // Get all predictions for a user
+  async getUserPredictions(userId: string): Promise<Prediction[]> {
+    const { data, error } = await supabase
+      .from('predictions')
+      .select('*')
+      .eq('user_id', userId);
+
+    if (error) {
+      console.error('Error fetching user predictions:', error);
+      return [];
+    }
+
+    return data || [];
+  },
+
+  // Get predictions for specific match
+  async getMatchPredictions(matchId: string): Promise<Prediction[]> {
+    const { data, error } = await supabase
+      .from('predictions')
+      .select('*')
+      .eq('match_id', matchId);
+
+    if (error) {
+      console.error('Error fetching match predictions:', error);
+      return [];
+    }
+
+    return data || [];
+  },
+
+  // Delete prediction
+  async deletePrediction(userId: string, matchId: string): Promise<boolean> {
+    const { error } = await supabase
+      .from('predictions')
+      .delete()
+      .eq('user_id', userId)
+      .eq('match_id', matchId);
+
+    if (error) {
+      console.error('Error deleting prediction:', error);
+      return false;
+    }
+
+    return true;
+  },
+
+  // === ACHIEVEMENTS (GAMIFICAÇÃO) ===
+
+  // Get all achievements
+  async getAllAchievements(): Promise<Achievement[]> {
+    const { data, error } = await supabase
+      .from('achievements')
+      .select('*');
+
+    if (error) {
+      console.error('Error fetching achievements:', error);
+      return [];
+    }
+
+    return data || [];
+  },
+
+  // Get user achievements
+  async getUserAchievements(userId: string): Promise<UserAchievement[]> {
+    const { data, error } = await supabase
+      .from('user_achievements')
+      .select(`
+        *,
+        achievement:achievements(*)
+      `)
+      .eq('user_id', userId);
+
+    if (error) {
+      console.error('Error fetching user achievements:', error);
+      return [];
+    }
+
+    return data || [];
+  },
+
+  // === EDGE FUNCTION: Process Round ===
+
+  // Call edge function to process official results
+  async processRoundResults(
+    matchId: string,
+    homeScore: number,
+    awayScore: number
+  ): Promise<{ success: boolean; message: string; processed?: number }> {
+    try {
+      const { data, error } = await supabase.functions.invoke('processar_rodada_completa', {
+        body: {
+          match_id: matchId,
+          home_score: homeScore,
+          away_score: awayScore
+        }
+      });
+
+      if (error) {
+        console.error('Error calling edge function:', error);
+        return { success: false, message: error.message };
+      }
+
+      return data;
+    } catch (error: any) {
+      console.error('Error processing round results:', error);
+      return { success: false, message: error.message || 'Erro ao processar resultados' };
+    }
   },
 
   // === ROUNDS & MATCHES MANAGEMENT ===
