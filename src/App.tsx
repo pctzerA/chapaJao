@@ -242,62 +242,51 @@ function AddRoundModal({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <motion.div
         initial={{ opacity: 0, scale: 0.9 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="bg-white rounded-2xl shadow-2xl p-8 max-w-3xl w-full my-8"
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl flex flex-col max-h-[90vh]"
       >
-        <div className="flex items-center justify-between mb-6">
-          <h3 className="text-2xl font-bold text-gray-800">Adicionar Nova Rodada</h3>
+        {/* HEADER FIXO */}
+        <div className="flex items-center justify-between p-6 md:p-8 border-b border-gray-200 flex-shrink-0">
+          <h3 className="text-xl md:text-2xl font-bold text-gray-800">Adicionar Nova Rodada</h3>
           <button 
             onClick={onClose} 
-            className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition flex items-center gap-2 font-semibold"
+            className="bg-green-600 text-white px-3 py-2 md:px-4 md:py-2 rounded-lg hover:bg-green-700 transition flex items-center gap-2 font-semibold text-sm"
           >
             <X className="w-4 h-4" />
-            Cancelar
+            <span className="hidden sm:inline">Cancelar</span>
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">Nome da Rodada</label>
-            <input
-              type="text"
-              value={stage}
-              onChange={(e) => setStage(e.target.value)}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-              placeholder="Ex: Rodada 11"
-              required
-            />
-          </div>
+        {/* CONTEÚDO COM SCROLL */}
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
+          <div className="overflow-y-auto flex-1 p-6 md:p-8 space-y-6">
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Nome da Rodada</label>
+              <input
+                type="text"
+                value={stage}
+                onChange={(e) => setStage(e.target.value)}
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                placeholder="Ex: Rodada 11"
+                required
+              />
+            </div>
 
-          <div>
-            <h4 className="text-sm font-semibold text-gray-700 mb-4">Partidas</h4>
-            <div className="space-y-4">
-              {matches.map((match, index) => (
-                <div key={index} className="border border-gray-200 rounded-xl p-4 space-y-3">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Time Casa</label>
-                      <select
-                        value={match.homeTeam}
-                        onChange={(e) => updateMatch(index, 'homeTeam', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-sm"
-                        required
-                      >
-                        <option value="">Selecione...</option>
-                        {teams.map(team => (
-                          <option key={team} value={team}>{team}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="flex items-end gap-2">
+            <div>
+              <h4 className="text-sm font-semibold text-gray-700 mb-4">Partidas</h4>
+              <div className="space-y-4">
+                {matches.map((match, index) => (
+                  <div key={index} className="border border-gray-200 rounded-xl p-3 md:p-4 space-y-3">
+                    {/* TIMES - Mobile: vertical, Desktop: horizontal */}
+                    <div className="flex flex-col md:flex-row md:items-end gap-3">
                       <div className="flex-1">
-                        <label className="block text-xs font-medium text-gray-600 mb-1">Time Fora</label>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Time Casa</label>
                         <select
-                          value={match.awayTeam}
-                          onChange={(e) => updateMatch(index, 'awayTeam', e.target.value)}
+                          value={match.homeTeam}
+                          onChange={(e) => updateMatch(index, 'homeTeam', e.target.value)}
                           className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-sm"
                           required
                         >
@@ -307,69 +296,88 @@ function AddRoundModal({
                           ))}
                         </select>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => removeMatch(index)}
-                        className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition"
-                        disabled={matches.length === 1}
-                      >
-                        <Trash2 className="w-5 h-5" />
-                      </button>
+                      <div className="flex gap-2">
+                        <div className="flex-1">
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Time Fora</label>
+                          <select
+                            value={match.awayTeam}
+                            onChange={(e) => updateMatch(index, 'awayTeam', e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-sm"
+                            required
+                          >
+                            <option value="">Selecione...</option>
+                            {teams.map(team => (
+                              <option key={team} value={team}>{team}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => removeMatch(index)}
+                          className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition self-end"
+                          disabled={matches.length === 1}
+                        >
+                          <Trash2 className="w-5 h-5" />
+                        </button>
+                      </div>
+                    </div>
+                    
+                    {/* DETALHES - Mobile: vertical, Desktop: grid */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Data</label>
+                        <input
+                          type="text"
+                          value={match.date}
+                          onChange={(e) => updateMatch(index, 'date', e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-sm"
+                          placeholder="Ex: 10/04"
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Hora</label>
+                        <input
+                          type="text"
+                          value={match.time}
+                          onChange={(e) => updateMatch(index, 'time', e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-sm"
+                          placeholder="Ex: 16:00"
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Estádio</label>
+                        <input
+                          type="text"
+                          value={match.venue}
+                          onChange={(e) => updateMatch(index, 'venue', e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-sm"
+                          placeholder="Ex: Maracanã"
+                          required
+                        />
+                      </div>
                     </div>
                   </div>
-                  <div className="grid grid-cols-3 gap-3">
-                    <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Data</label>
-                      <input
-                        type="text"
-                        value={match.date}
-                        onChange={(e) => updateMatch(index, 'date', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-sm"
-                        placeholder="Ex: 10/04"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Hora</label>
-                      <input
-                        type="text"
-                        value={match.time}
-                        onChange={(e) => updateMatch(index, 'time', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-sm"
-                        placeholder="Ex: 16:00"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Estádio</label>
-                      <input
-                        type="text"
-                        value={match.venue}
-                        onChange={(e) => updateMatch(index, 'venue', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-sm"
-                        placeholder="Ex: Maracanã"
-                        required
-                      />
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
 
-            <button
-              type="button"
-              onClick={addMatch}
-              className="mt-3 text-green-600 font-semibold hover:text-green-700 flex items-center gap-2 text-sm"
-            >
-              <Plus className="w-4 h-4" />
-              Adicionar Partida
-            </button>
+              <button
+                type="button"
+                onClick={addMatch}
+                className="mt-3 text-green-600 font-semibold hover:text-green-700 flex items-center gap-2 text-sm"
+              >
+                <Plus className="w-4 h-4" />
+                Adicionar Partida
+              </button>
+            </div>
           </div>
 
-          <div className="flex justify-end">
+          {/* FOOTER FIXO */}
+          <div className="border-t border-gray-200 p-4 md:p-6 flex-shrink-0 bg-gray-50">
             <button
               type="submit"
-              className="bg-green-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-green-700 transition shadow-md flex items-center gap-2"
+              className="w-full bg-green-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-green-700 transition shadow-md flex items-center justify-center gap-2"
             >
               <Save className="w-5 h-5" />
               Salvar Rodada
@@ -717,23 +725,22 @@ export default function App() {
     return isFixedAdmin || user.isAdmin === true;
   }, [user, isFixedAdmin]);
 
+  // Auto-save predictions to localStorage (but NOT to database until confirmed)
   useEffect(() => {
     if (user) {
       const updated = { ...user, predictions };
-      saveUser(updated); // Keep localStorage for backward compatibility
-      
-      // Also update database
-      db.updatePredictions(user.phone, predictions).catch(err => {
-        console.error('Error updating predictions in database:', err);
-      });
+      saveUser(updated); // Keep localStorage for immediate recovery
     }
   }, [predictions, user]);
 
   const handleLogin = async (name: string, phone: string) => {
+    console.log('🔐 Login iniciado para:', phone);
+    
     // Check database first
     let bolaoUser = await db.getUserByPhone(phone);
     
     if (!bolaoUser) {
+      console.log('👤 Usuário não encontrado, criando novo...');
       // Create new user in database
       bolaoUser = await db.createUser(name, phone);
       if (!bolaoUser) {
@@ -744,12 +751,17 @@ export default function App() {
       // Reload all users
       const users = await db.getAllUsers();
       setAllUsers(users.map(bolaoUserToUserData));
+    } else {
+      console.log('✅ Usuário encontrado no banco:', bolaoUser.nome);
+      console.log('📊 Palpites carregados do banco:', Object.keys(bolaoUser.predictions || {}).length, 'jogos');
     }
 
     const userData = bolaoUserToUserData(bolaoUser);
     setUser(userData);
-    setPredictions(userData.predictions);
+    setPredictions(userData.predictions || {});
     saveUser(userData); // Keep localStorage for backward compatibility
+    
+    console.log('🎯 Login completo. Palpites no estado:', Object.keys(userData.predictions || {}).length);
   };
 
   const handleLogout = () => {
@@ -792,16 +804,29 @@ export default function App() {
   const handleConfirmPredictions = async () => {
     if (!user) return;
     
-    // Bloquear rodada no banco de dados
-    const success = await db.lockRound(user.phone, selectedRound);
-    if (!success) {
+    console.log('💾 Salvando palpites no banco de dados...');
+    console.log('📋 Total de palpites a salvar:', Object.keys(predictions).length);
+    
+    // PRIMEIRO: Salvar os palpites no banco de dados
+    const saveSuccess = await db.updatePredictions(user.phone, predictions);
+    if (!saveSuccess) {
+      setToast('Erro ao salvar palpites. Tente novamente.');
+      return;
+    }
+    console.log('✅ Palpites salvos no banco com sucesso!');
+    
+    // SEGUNDO: Bloquear rodada no banco de dados
+    const lockSuccess = await db.lockRound(user.phone, selectedRound);
+    if (!lockSuccess) {
       setToast('Erro ao bloquear palpites. Tente novamente.');
       return;
     }
+    console.log('🔒 Rodada bloqueada no banco com sucesso!');
 
-    // Atualizar estado local
+    // TERCEIRO: Atualizar estado local
     const updatedUser = {
       ...user,
+      predictions,
       lockedRounds: {
         ...user.lockedRounds,
         [selectedRound]: true
